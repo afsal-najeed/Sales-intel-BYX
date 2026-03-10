@@ -603,11 +603,12 @@ localStorage.setItem('byx_script_url', DRIVE_SCRIPT_URL);
 
 let portfolio = JSON.parse(localStorage.getItem('byx_portfolio') || '[]');
 let driveConnected = localStorage.getItem('byx_drive_connected') === 'true';
-let savedBriefs = JSON.parse(localStorage.getItem('byx_briefs') || '[]');
+let savedBriefs = []; // loaded from Drive cloud
 let currentResult = null;
 let clientData = {};
 let selections = { goal: null, size: null, content: null };
 let webSearchEnabled = false;
+let savedByName = localStorage.getItem('byx_rep_name') || '';
 
 function toggleWebSearch() {
   webSearchEnabled = !webSearchEnabled;
@@ -631,52 +632,75 @@ if (portfolio.length === 0 && !driveConnected) {
   savePortfolio();
 }
 
-// ─── HISTORY ─────────────────────────────────────────────────────────────────
-
-function saveBriefs() {
-  localStorage.setItem('byx_briefs', JSON.stringify(savedBriefs));
-}
+// ─── HISTORY (CLOUD) ─────────────────────────────────────────────────────────
 
 function updateHistoryCount() {
   document.getElementById('historyCount').textContent = savedBriefs.length;
 }
 
-function saveCurrentBrief() {
+async function saveCurrentBrief() {
   if (!currentResult || !clientData.name) return;
 
-  // Check if already saved for this client (update instead of duplicate)
-  const existingIdx = savedBriefs.findIndex(b => b.clientName === clientData.name);
+  // Prompt for rep name if not set
+  if (!savedByName) {
+    const name = prompt('Your name (saved with the brief so the team knows who ran it):');
+    if (!name) return;
+    savedByName = name.trim();
+    localStorage.setItem('byx_rep_name', savedByName);
+  }
+
+  const btn = event.target.closest('button');
+  const orig = btn.textContent;
+  btn.textContent = 'Saving...';
+  btn.disabled = true;
 
   const brief = {
     id: Date.now(),
     clientName: clientData.name,
     industry: clientData.industry || '',
     goal: clientData.goal || '',
+    savedBy: savedByName,
     savedAt: new Date().toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' }),
     topServices: (currentResult.servicesRanked || []).filter(s => s.priority === 'high').map(s => s.service).slice(0, 3),
     result: currentResult,
     clientData: { ...clientData }
   };
 
-  if (existingIdx > -1) {
-    savedBriefs[existingIdx] = brief;
-  } else {
-    savedBriefs.unshift(brief);
+  try {
+    const url = `${DRIVE_SCRIPT_URL}?action=saveBrief&brief=${encodeURIComponent(JSON.stringify(brief))}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+
+    // Update local cache
+    const existingIdx = savedBriefs.findIndex(b => b.clientName === brief.clientName);
+    if (existingIdx > -1) savedBriefs[existingIdx] = brief;
+    else savedBriefs.unshift(brief);
+    updateHistoryCount();
+
+    btn.textContent = '✓ Saved!';
+    btn.style.background = '#82CF0A';
+    setTimeout(() => { btn.textContent = orig; btn.style.background = ''; btn.disabled = false; }, 1800);
+  } catch(err) {
+    btn.textContent = orig;
+    btn.disabled = false;
+    alert('Save failed: ' + err.message);
   }
+}
 
-  saveBriefs();
-  updateHistoryCount();
-
-  // Flash confirmation
-  const btn = event.target.closest('button');
-  const orig = btn.textContent;
-  btn.textContent = '✓ Saved!';
-  btn.style.background = '#82CF0A';
-  setTimeout(() => { btn.textContent = orig; btn.style.background = ''; }, 1800);
+async function loadCloudBriefs() {
+  try {
+    const res = await fetch(`${DRIVE_SCRIPT_URL}?action=getBriefs`);
+    const data = await res.json();
+    if (data.success) {
+      savedBriefs = data.briefs || [];
+      updateHistoryCount();
+    }
+  } catch(e) {}
 }
 
 function openHistory() {
-  renderHistoryList();
+  loadCloudBriefs().then(() => renderHistoryList());
   document.getElementById('historyOverlay').classList.add('open');
   document.body.style.overflow = 'hidden';
 }
@@ -707,11 +731,11 @@ function renderHistoryList() {
     <div class="history-card" onclick="loadBrief(${b.id})">
       <div class="history-card-top">
         <div class="history-card-name">${b.clientName}</div>
-        <div class="history-card-date">${b.savedAt}</div>
+        <div class="history-card-date">${b.savedAt}${b.savedBy ? ' · ' + b.savedBy : ''}</div>
       </div>
       <div class="history-card-meta">${[b.industry, b.goal].filter(Boolean).join(' · ') || 'BYX Brief'}</div>
       <div class="history-card-tags">
-        ${b.topServices.map(s => `<span class="history-tag">${s}</span>`).join('')}
+        ${(b.topServices||[]).map(s => `<span class="history-tag">${s}</span>`).join('')}
       </div>
       <div class="history-card-footer">
         <button class="btn-load" onclick="event.stopPropagation();loadBrief(${b.id})">Load Brief →</button>
@@ -738,11 +762,17 @@ function loadBrief(id) {
   closeHistory();
 }
 
-function deleteBrief(id) {
-  savedBriefs = savedBriefs.filter(b => b.id !== id);
-  saveBriefs();
-  updateHistoryCount();
-  renderHistoryList();
+async function deleteBrief(id) {
+  try {
+    const res = await fetch(`${DRIVE_SCRIPT_URL}?action=deleteBrief&id=${id}`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+    savedBriefs = savedBriefs.filter(b => b.id !== id);
+    updateHistoryCount();
+    renderHistoryList();
+  } catch(err) {
+    alert('Delete failed: ' + err.message);
+  }
 }
 
 // ─── DRIVE SYNC ───────────────────────────────────────────────────────────────
@@ -1048,6 +1078,7 @@ function resetApp() {
 
 renderPortfolioEntries();
 updateHistoryCount();
+loadCloudBriefs(); // load shared history on startup
 
 if (driveConnected) updateDriveStatus(true, portfolio.length);
 document.getElementById('driveScriptUrl').value = DRIVE_SCRIPT_URL;

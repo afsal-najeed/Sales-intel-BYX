@@ -849,47 +849,23 @@ async function runAnalysis() {
   const iv = setInterval(() => { si = (si + 1) % statuses.length; statusEl.innerHTML = statuses[si] + '<span>...</span>'; }, 2000);
 
   try {
-    const portfolioSummary = portfolio.map(p => `- "${p.name}" [${p.cat}]: ${p.desc}`).join('\n');
+    // Limit portfolio to 5 most relevant items to reduce tokens
+    const portfolioSummary = portfolio.slice(0, 5).map(p => `${p.name} [${p.cat}]`).join(', ');
 
-    const prompt = `You are a senior business development consultant for BYX Studio, a creative studio specialising in:
-- 3D Walkthrough / Architectural Viz
-- 3D Animation / VFX
-- 2D Motion Graphics
-- Corporate / Brand Videos
-- AI-generated Video
-- Game Assets / Real-time 3D
-- Immersive / XR Content
+    const prompt = `BYX Studio sells: 3D Walkthrough, 3D Animation/VFX, 2D Motion Graphics, Corporate Video, AI Video, Game Assets, Immersive/XR.
 
-Your job: Research the client below, understand their business, find what they're missing visually, and recommend what BYX should pitch.
+CLIENT: ${clientData.name} | Industry: ${clientData.industry || '?'} | Goal: ${clientData.goal} | Size: ${clientData.size} | Content: ${clientData.contentHistory} | Notes: ${clientData.context || '-'}
+PORTFOLIO: ${portfolioSummary}
 
-CLIENT: ${clientData.name}
-INDUSTRY HINT: ${clientData.industry || 'unknown'}
-MEETING GOAL: ${clientData.goal}
-CLIENT SIZE: ${clientData.size}
-CURRENT CONTENT SETUP: ${clientData.contentHistory}
-SALES REP NOTES: ${clientData.context || 'None'}
-
-BYX PORTFOLIO AVAILABLE:
-${portfolioSummary}
-
-Respond ONLY with a valid JSON object (no markdown, no explanation):
-{
-  "clientSummary": "2-3 sentence description of who this client likely is, what they do, and their typical goals",
-  "industryContext": "What companies like this typically need from creative studios",
-  "contentGaps": "2-3 specific content/visual gaps this type of client commonly has",
-  "servicesRanked": [{ "service": "service name", "priority": "high|medium|low", "reason": "why this fits them" }],
-  "avoidPitching": [{ "service": "service name", "reason": "why not to pitch this" }],
-  "portfolioToShow": [{ "itemName": "exact portfolio item name from the list", "reason": "why it's relevant" }],
-  "pitchAngle": "A 3-4 sentence pitch script the sales rep can use to open the conversation — specific to this client type",
-  "warningFlag": "Any red flag or thing to be careful about in this meeting (or null if none)"
-}`;
+Search for info about this client, then reply ONLY with JSON:
+{"clientSummary":"who they are","industryContext":"what they need","contentGaps":"gaps","servicesRanked":[{"service":"name","priority":"high|medium|low","reason":"why"}],"avoidPitching":[{"service":"name","reason":"why not"}],"portfolioToShow":[{"itemName":"name from list","reason":"why"}],"pitchAngle":"opening pitch","warningFlag":"flag or null"}`;
 
     const response = await fetch('/.netlify/functions/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 1500,
+        max_tokens: 800,
         tools: [{ type: 'web_search_20250305', name: 'web_search' }],
         messages: [{ role: 'user', content: prompt }]
       })
